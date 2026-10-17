@@ -14,10 +14,12 @@ def send_welcome(message):
   if message.from_user.id != ADMIN_CHAT_ID:
     bot.reply_to(message, "⚠️ عذراً، هذا البوت خاص ولا يمكنك استخدامه.")
     return
+  
+  current_dir = os.getcwd()
   bot.reply_to(
       message,
-      "☁️ أهلاً بك!  بنجاح.\nيمكنك"
-      " إرسال أي أمر للتحكم بالسيرفر.",
+      f"☁️ أهلاً بك! تم تشغيل البوت بنجاح.\n📁 المسار الحالي:\n`{current_dir}`\n\nيمكنك إرسال أي أمر للتحكم بالسيرفر.",
+      parse_mode="Markdown"
   )
 
 
@@ -26,10 +28,21 @@ def execute_command(message):
   if message.from_user.id != ADMIN_CHAT_ID:
     return
 
-  command = message.text
+  command = message.text.strip()
 
   try:
-    # تنفيذ الأمر في شل السيرفر
+    # دعم أمر الانتقال بين المجلدات (cd) بشكل دائم أثناء الجلسة
+    if command.startswith("cd "):
+      new_dir = command[3:].strip()
+      # دعم الانتقال للمجلد الرئيسي إذا أردت أو المسارات النسبية
+      os.chdir(new_dir)
+      current_dir = os.getcwd()
+      bot.send_message(
+          message.chat.id, f"📁 تم تغيير المسار إلى:\n`{current_dir}`", parse_mode="Markdown"
+      )
+      return
+
+    # تنفيذ الأوامر الأخرى في شل السيرفر مع الحفاظ على المسار الحالي
     result = subprocess.run(
         command, shell=True, capture_output=True, text=True, timeout=120
     )
@@ -38,10 +51,10 @@ def execute_command(message):
     if not output.strip():
       output = "✅ تم تنفيذ الأمر بنجاح (لا توجد مخرجات)."
 
-    # تقسيم الرسالة إذا تجاوزت الحد الأقصى للتليجرام
+    # تقسيم الرسالة إذا تجاوزت الحد الأقصى للتليجرام (4000 حرف)
     if len(output) > 4000:
       for x in range(0, len(output), 4000):
-        bot.send_message(message.chat.id, output[x : x + 4000])
+        bot.send_message(message.chat.id, f"```bash\n{output[x : x + 4000]}\n```", parse_mode="Markdown")
     else:
       bot.send_message(
           message.chat.id, f"```bash\n{output}\n```", parse_mode="Markdown"
@@ -56,4 +69,3 @@ def execute_command(message):
 if __name__ == "__main__":
   print("[*] Cloud Bot is running...")
   bot.infinity_polling()
-
